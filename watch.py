@@ -5,6 +5,7 @@ import socket
 import threading
 import web
 import logging
+import shutil
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,9 +44,15 @@ def generate_certs_and_restart_nginx(aliases):
     cmd = 'certbot certonly --webroot --agree-tos --expand --email=admin@{} \
 --non-interactive -w /var/www/letsencrypt '.format(domain)
     cmd += ' '.join(['-d {}'.format(fqdn) for fqdn in fqdns])
-    logging.info('Generating certs for: {}'.format(fqdns))
+
+    # Remove old certificates, otherwise we might have duplicate folders,
+    # see e.g: https://github.com/certbot/certbot/issues/2128
+    shutil.rmtree('/etc/letsencrypt/live/', ignore_errors=True)
+    shutil.rmtree('/etc/letsencrypt/archive/', ignore_errors=True)
+    shutil.rmtree('/etc/letsencrypt/renewal/', ignore_errors=True)
 
     # Run certbot
+    logging.info('Generating certs for: {}'.format(fqdns))
     call(cmd, shell=True)
 
     # Update nginx conf
@@ -151,7 +158,7 @@ def main():
 
     # Create a setup-nginx, that can be used for letsencrypt on first run
     call('nginx -s stop', shell=True)
-    change_nginx_conf(setup=False)
+    change_nginx_conf(setup=True)
     call('nginx', shell=True)
 
     generate_certs_for_network(network_name)
