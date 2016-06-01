@@ -1,0 +1,7 @@
+.container__env textarea {
+  width: 600px;
+  height: 120px;
+  border: 1px solid #cccccc;
+  resize: none;
+  padding: 5px;
+}

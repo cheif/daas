@@ -7,10 +7,12 @@ DaaS is a small docker-based PaaS that you can run yourself, to get up and runni
 To start it you should be able to run:
 
 ```
-docker run -p 80:80 -p 443:443 -e DOMAIN_NAME=example.com -v /var/run/docker.sock:/var/run/docker.sock -d --restart=always cheif/daas
+docker run -p 80:80 -p 443:443 -e DOMAIN_NAME=example.com -e USERNAME=foo -e PASSWORD=bar -v /var/run/docker.sock:/var/run/docker.sock -d --restart=always cheif/daas
 ```
 
 This should pull the image from docker hub and start it up, the port forwards is for http(s) traffic (Only https is allowed by default), the DOMAIN_NAME env is for setting up SSL with Let's encrypt and the mounting of the `docker.sock` is to be able to start new containers etc.
+
+USERNAME/PASSWORD will be used with basic auth both for the web-interface (reachable at `example.com/` and for the docker registry.
 
 ## Using
 

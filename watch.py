@@ -86,16 +86,20 @@ def setup_network(network_name):
         c.connect_container_to_network(container_id, network_name)
 
 
-def update_container(network_name, repo, tag, alias=None):
-    # Try to find an existing container
-    alias = alias or repo
+def get_containers_with_alias(network_name, alias):
     containers = c.inspect_network(network_name)['Containers']
     aliases_map = defaultdict(list)
     for container in containers:
         for a in get_aliases(container):
-            aliases_map[a].append(container)
+            aliases_map[a].append(c.inspect_container(container))
 
-    old_containers = aliases_map.get(alias)
+    return aliases_map.get(alias)
+
+
+def update_container(network_name, repo, tag, alias=None):
+    # Try to find an existing container
+    alias = alias or repo
+    old_containers = get_containers_with_alias(network_name, alias)
     if old_containers:
         old_img = c.inspect_container(old_containers[0])['Image']
         new_img = c.inspect_image('{}:{}'.format(repo, tag))['Id']
@@ -110,6 +114,21 @@ def update_container(network_name, repo, tag, alias=None):
     if old_containers:
         for container in old_containers:
             c.stop(container)
+            c.remove(container)
+
+
+def update_environment(network_name, alias, env):
+    # Find container running with alias, and create a copy with new environment
+    containers = get_containers_with_alias(network_name, alias)
+    container = containers[0]
+
+    new = c.create_container(container['Image'], environment=env)
+    c.connect_container_to_network(new, network_name, aliases=[alias])
+    c.start(new)
+
+    for old in containers:
+        c.stop(old)
+        c.remove(old)
 
 
 def setup_registry(network_name):
@@ -133,12 +152,53 @@ class EventHandler(object):
                 update_container(self.network_name, repo, tag, alias=repo_name)
 
 
-app = web.application(('/', 'EventHandler'), globals())
+class ConfigHandler(object):
+    def GET(self, alias):
+        def _get_info(cont):
+            cont = c.inspect_container(cont)
+            network_info = \
+                cont['NetworkSettings']['Networks'][self.network_name]
+            alias = network_info['Aliases'][0] if network_info['Aliases'] \
+                else ''
+            return {
+                'alias': alias,
+                'env': cont['Config']['Env'],
+                'state': 'running' if cont['State']['Running'] else 'error',
+            }
+        container_info = [_get_info(cont) for cont in c.containers()]
+        return json.dumps(container_info)
+
+    def PUT(self, alias):
+        d = json.loads(web.data())
+        env = [e for e in d['env'] if e != '']
+        update_environment(self.network_name, alias, env)
+
+    def POST(self):
+        d = json.loads(web.data())
+        for e in d['events']:
+            if e['action'] == 'push' and 'tag' in e['target']:
+                repo_name, tag = e['target']['repository'], e['target']['tag']
+                repo = '{}/{}'.format(environ['DOMAIN_NAME'], repo_name)
+                c.pull('{}:{}'.format(repo, tag))
+                update_container(self.network_name, repo, tag, alias=repo_name)
+
+
+class IndexHandler(object):
+    def GET(self):
+        return web.template.render('').index()
+
+
+app = web.application((
+    '/', 'IndexHandler',
+    '/events', 'EventHandler',
+    '/config(?:/(?P<alias>[^/]*))?/?', 'ConfigHandler'),
+    globals())
 
 
 def start_event_listener(network_name):
     # Ugly way to pass network_name to web-handler
     EventHandler.network_name = network_name
+    ConfigHandler.network_name = network_name
     thread = threading.Thread(target=app.run)
     thread.daemon = True
     thread.start()

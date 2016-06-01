@@ -4,7 +4,7 @@ RUN echo '''\n\
 notifications:\n\
   endpoints:\n\
     - name: daas-webhook\n\
-      url: http://daas:8080\n\
+      url: http://daas:8080/events\n\
       headers:\n\
       timeout: 600000ms\n\
       threshold: 5\n\
