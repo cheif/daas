@@ -5,7 +5,7 @@ import socket
 import threading
 import web
 import logging
-import shutil
+import itertools
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,8 +19,9 @@ c = docker.Client(base_url='unix://var/run/docker.sock')
 
 def get_aliases(container_id):
     networks = c.inspect_container(container_id)['NetworkSettings']['Networks']
-    aliases = networks['daas']['Aliases']
-    return aliases or []
+    aliases = [a for a in networks['daas']['Aliases'] or []
+               if not container_id.startswith(a)]
+    return aliases
 
 
 def get_aliases_for_network(network_name):
@@ -34,22 +35,27 @@ def generate_certs_for_network(network_name):
     generate_certs_and_restart_nginx(aliases)
 
 
+def get_current_domains():
+    '''Fetch current domains we have a cert for from renew-conf'''
+    path = '/etc/letsencrypt/renewal/{}.conf'.format(environ['DOMAIN_NAME'])
+    with open(path) as f:
+        lines = f.readlines()
+        lines = list(
+            itertools.dropwhile(lambda l: 'webroot_map' not in l, lines))[1:]
+        return [l.split('=')[0].strip() for l in lines]
+
+
 def generate_certs_and_restart_nginx(aliases):
     # Don't add routes for this container or the registry
     non_routed_aliases = ['daas', 'registry']
     domain = environ['DOMAIN_NAME']
-    fqdns = [domain]
-    fqdns += set(['{}.{}'.format(a, domain) for a in aliases
-                  if a not in non_routed_aliases])
+    fqdns = {domain}
+    fqdns.update(set(['{}.{}'.format(a, domain) for a in aliases
+                      if a not in non_routed_aliases]))
+    fqdns.update(get_current_domains())
     cmd = 'certbot certonly --webroot --agree-tos --expand --email=admin@{} \
 --non-interactive -w /var/www/letsencrypt '.format(domain)
     cmd += ' '.join(['-d {}'.format(fqdn) for fqdn in fqdns])
-
-    # Remove old certificates, otherwise we might have duplicate folders,
-    # see e.g: https://github.com/certbot/certbot/issues/2128
-    shutil.rmtree('/etc/letsencrypt/live/', ignore_errors=True)
-    shutil.rmtree('/etc/letsencrypt/archive/', ignore_errors=True)
-    shutil.rmtree('/etc/letsencrypt/renewal/', ignore_errors=True)
 
     # Run certbot
     logging.info('Generating certs for: {}'.format(fqdns))
