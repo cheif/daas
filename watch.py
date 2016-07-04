@@ -38,11 +38,14 @@ def generate_certs_for_network(network_name):
 def get_current_domains():
     '''Fetch current domains we have a cert for from renew-conf'''
     path = '/etc/letsencrypt/renewal/{}.conf'.format(environ['DOMAIN_NAME'])
-    with open(path) as f:
-        lines = f.readlines()
-        lines = list(
-            itertools.dropwhile(lambda l: 'webroot_map' not in l, lines))[1:]
-        return [l.split('=')[0].strip() for l in lines]
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+            lines = list(itertools.dropwhile(lambda l: 'webroot_map' not in l,
+                                             lines))[1:]
+            return [l.split('=')[0].strip() for l in lines]
+    except IOError:
+        return []
 
 
 def generate_certs_and_restart_nginx(aliases):
@@ -228,6 +231,9 @@ def main():
     call('nginx', shell=True)
 
     generate_certs_for_network(network_name)
+
+    c.login(environ.get('USERNAME'), environ.get('PASSWORD'),
+            registry=environ.get('DOMAIN_NAME'))
     for ev in c.events(filters={'network': network_name}):
         generate_certs_for_network(network_name)
 
