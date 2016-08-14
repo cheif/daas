@@ -109,14 +109,17 @@ def update_container(network_name, repo, tag, alias=None):
     # Try to find an existing container
     alias = alias or repo
     old_containers = get_containers_with_alias(network_name, alias)
+    env = []
     if old_containers:
+        env = c.inspect_container(old_containers[0])['Config']['Env']
         old_img = c.inspect_container(old_containers[0])['Image']
         new_img = c.inspect_image('{}:{}'.format(repo, tag))['Id']
         if old_img == new_img:
             # Same image, just let the old one run
             return
 
-    new_container = c.create_container('{}:{}'.format(repo, tag))
+    new_container = c.create_container('{}:{}'.format(repo, tag),
+                                       environment=env)
     c.connect_container_to_network(new_container, network_name,
                                    aliases=[alias])
     c.start(new_container)
