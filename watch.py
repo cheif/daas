@@ -126,7 +126,7 @@ def update_container(network_name, repo, tag, alias=None):
     if old_containers:
         for container in old_containers:
             c.stop(container)
-            c.remove(container)
+            c.remove_container(container)
 
 
 def update_environment(network_name, alias, env):
@@ -140,7 +140,7 @@ def update_environment(network_name, alias, env):
 
     for old in containers:
         c.stop(old)
-        c.remove(old)
+        c.remove_container(old)
 
 
 def setup_registry(network_name):
