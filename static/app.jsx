@@ -11,6 +11,7 @@ class Container extends React.Component {
   updateEnv() {
     fetch(`/config/${this.state.alias}/`, {
       method: 'put',
+      credentials: 'include',
       body: JSON.stringify({
         env: this.state.env
       })
@@ -43,7 +44,7 @@ class ContainerList extends React.Component {
     this.refresh()
   }
   refresh() {
-    fetch('/config').then(r => r.json()).then(containers =>
+    fetch('/config', {credentials: 'include'}).then(r => r.json()).then(containers =>
       this.setState({containers: containers}))
   }
   render() {
