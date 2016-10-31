@@ -6,6 +6,7 @@ import threading
 import web
 import logging
 import itertools
+import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -49,25 +50,25 @@ def get_current_domains():
 
 
 def generate_certs_and_restart_nginx(aliases):
-    # Don't add routes for this container or the registry
-    non_routed_aliases = ['daas', 'registry']
-    domain = environ['DOMAIN_NAME']
-    fqdns = {domain}
-    fqdns.update(set(['{}.{}'.format(a, domain) for a in aliases
-                      if a not in non_routed_aliases]))
-    fqdns.update(get_current_domains())
-    cmd = 'certbot certonly --webroot --agree-tos --expand --email=admin@{} \
---non-interactive -w /var/www/letsencrypt '.format(domain)
-    cmd += ' '.join(['-d {}'.format(fqdn) for fqdn in fqdns])
+    if 'DOMAIN_NAME' in environ:
+        # Don't add routes for this container or the registry
+        non_routed_aliases = ['registry']
+        domain = environ['DOMAIN_NAME']
+        fqdns = {domain}
+        fqdns.update(set(['{}.{}'.format(a, domain) for a in aliases
+                          if a not in non_routed_aliases]))
+        fqdns.update(get_current_domains())
+        cmd = 'certbot certonly --webroot --agree-tos --expand --email=admin@{} \
+    --non-interactive -w /var/www/letsencrypt '.format(domain)
+        cmd += ' '.join(['-d {}'.format(fqdn) for fqdn in fqdns])
 
-    # Run certbot
-    logging.info('Generating certs for: {}'.format(fqdns))
-    call(cmd, shell=True)
+        # Run certbot
+        logging.info('Generating certs for: {}'.format(fqdns))
+        call(cmd, shell=True)
+        logging.info('Certificates generated')
 
     # Update nginx conf
     change_nginx_conf()
-    call('nginx -s reload', shell=True)
-    logging.info('Certificates generated')
 
 
 def change_nginx_conf(setup=False):
@@ -78,6 +79,7 @@ def change_nginx_conf(setup=False):
     with open('/etc/nginx/nginx.conf', 'w') as f:
         f.write(nginx_conf)
     call('nginx -s reload', shell=True)
+    logging.info('nginx.conf updated')
 
 
 def setup_network(network_name):
@@ -118,8 +120,12 @@ def update_container(network_name, repo, tag, alias=None):
             # Same image, just let the old one run
             return
 
-    new_container = c.create_container('{}:{}'.format(repo, tag),
-                                       environment=env)
+    try:
+        new_container = c.create_container('{}:{}'.format(repo, tag),
+                                           environment=env)
+    except docker.errors.NotFound:
+        # Just abort for now
+        return
     c.connect_container_to_network(new_container, network_name,
                                    aliases=[alias])
     c.start(new_container)
@@ -151,6 +157,7 @@ def setup_registry(network_name):
         # build to happen
         pass
     update_container(network_name, 'registry', 'notifs')
+    logging.info("Registry running")
 
 
 class EventHandler(object):
@@ -226,7 +233,6 @@ def main():
     logging.info("Network fixed")
 
     setup_registry(network_name)
-    logging.info("Registry running")
 
     # Create a setup-nginx, that can be used for letsencrypt on first run
     call('nginx -s stop', shell=True)
@@ -235,8 +241,12 @@ def main():
 
     generate_certs_for_network(network_name)
 
-    c.login(environ.get('USERNAME'), environ.get('PASSWORD'),
-            registry=environ.get('DOMAIN_NAME'))
+    # Make sure everything is up
+    time.sleep(1)
+
+    if 'DOMAIN_NAME' in environ:
+        c.login(environ.get('USERNAME'), environ.get('PASSWORD'),
+                registry=environ.get('DOMAIN_NAME'))
     for ev in c.events(filters={'network': network_name}):
         generate_certs_for_network(network_name)
 

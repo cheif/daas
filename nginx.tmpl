@@ -38,26 +38,16 @@ http {
     }
 
     {% if not env.setup %}
-    ssl_certificate /etc/letsencrypt/live/{{env.DOMAIN_NAME}}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{{env.DOMAIN_NAME}}/privkey.pem;
-    ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
-    ssl_prefer_server_ciphers on;
-    ssl_dhparam /etc/letsencrypt/dhparam.pem;
-    ssl_session_timeout 1d;
-    ssl_session_cache shared:SSL:50m;
-    ssl_stapling on;
-    ssl_stapling_verify on;
-    add_header Strict-Transport-Security max-age=15768000;
-
-    map $upstream_http_docker_distribution_api_version $docker_distribution_api_version {
-    'registry/2.0' '';
-    default registry/2.0;
-  }
-
     server {
+        {% if not env.DOMAIN_NAME %}
+        # Run on port 80 instead if we don't have a domain-name
+        listen 80;
+        server_name ~^(www\.)?(?<subdomain>.+?)\.[^.]*$;
+        {% else %}
         listen 443 ssl;
-
         server_name ~^(www\.)?(?<subdomain>.+?)\.[^.]*\.[^.]*$;
+        {% endif %}
+
         # $subdomain now contains everything before the domain, including dots
         # we can now use this to proxy-pass to different containers in the docker-network
 
@@ -72,6 +62,23 @@ http {
             # We require the container to have their service on 8080
             proxy_pass http://$subdomain:8080$uri$is_args$args;
         }
+    }
+    {% if env.DOMAIN_NAME %}
+    # No ssl or registry if we don't have a domain-name
+    ssl_certificate /etc/letsencrypt/live/{{env.DOMAIN_NAME}}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{env.DOMAIN_NAME}}/privkey.pem;
+    ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
+    ssl_prefer_server_ciphers on;
+    ssl_dhparam /etc/letsencrypt/dhparam.pem;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    add_header Strict-Transport-Security max-age=15768000;
+
+    map $upstream_http_docker_distribution_api_version $docker_distribution_api_version {
+      'registry/2.0' '';
+      default registry/2.0;
     }
 
     server {
@@ -94,5 +101,6 @@ http {
             proxy_pass http://docker-registry;
         }
     }
+    {% endif %}
     {% endif %}
 }
