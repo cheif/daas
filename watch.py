@@ -110,19 +110,29 @@ def get_containers_with_alias(network_name, alias):
 def update_container(network_name, repo, tag, alias=None):
     # Try to find an existing container
     alias = alias or repo
+    image_name = '{}:{}'.format(repo, tag)
     old_containers = get_containers_with_alias(network_name, alias)
     env = []
     if old_containers:
         env = c.inspect_container(old_containers[0])['Config']['Env']
         old_img = c.inspect_container(old_containers[0])['Image']
-        new_img = c.inspect_image('{}:{}'.format(repo, tag))['Id']
+        new_img = c.inspect_image(image_name)['Id']
         if old_img == new_img:
             # Same image, just let the old one run
             return
 
     try:
+        volumes = c.inspect_image(image_name)['Config']['Volumes'].keys()
+        host_config = docker.utils.create_host_config(binds=[
+            '{}-{}-{}-{}:{}'.format(environ['DOMAIN_NAME'], alias, tag,
+                                    vol.replace('/', '_'), vol)
+            for vol in volumes
+        ])
+
         new_container = c.create_container('{}:{}'.format(repo, tag),
-                                           environment=env)
+                                           environment=env,
+                                           volumes=volumes,
+                                           host_config=host_config)
     except docker.errors.NotFound as e:
         logging.error(e)
         # Just abort for now
@@ -193,15 +203,6 @@ class ConfigHandler(object):
         d = json.loads(web.data())
         env = [e for e in d['env'] if e != '']
         update_environment(self.network_name, alias, env)
-
-    def POST(self):
-        d = json.loads(web.data())
-        for e in d['events']:
-            if e['action'] == 'push' and 'tag' in e['target']:
-                repo_name, tag = e['target']['repository'], e['target']['tag']
-                repo = '{}/{}'.format(environ['DOMAIN_NAME'], repo_name)
-                c.pull('{}:{}'.format(repo, tag))
-                update_container(self.network_name, repo, tag, alias=repo_name)
 
 
 class IndexHandler(object):
