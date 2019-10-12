@@ -123,7 +123,8 @@ def update_container(network_name, repo, tag, alias=None):
     try:
         new_container = c.create_container('{}:{}'.format(repo, tag),
                                            environment=env)
-    except docker.errors.NotFound:
+    except docker.errors.NotFound as e:
+        logging.error(e)
         # Just abort for now
         return
     c.connect_container_to_network(new_container, network_name,
@@ -167,7 +168,8 @@ class EventHandler(object):
             if e['action'] == 'push' and 'tag' in e['target']:
                 repo_name, tag = e['target']['repository'], e['target']['tag']
                 repo = '{}/{}'.format(environ['DOMAIN_NAME'], repo_name)
-                c.pull('{}:{}'.format(repo, tag))
+                for line in c.pull(repository=repo, tag=tag, stream=True):
+                    logging.info(json.dumps(json.loads(line), indent=4))
                 update_container(self.network_name, repo, tag, alias=repo_name)
 
 
