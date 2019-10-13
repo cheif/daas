@@ -122,7 +122,7 @@ def update_container(network_name, repo, tag, alias=None):
             return
 
     try:
-        volumes = c.inspect_image(image_name)['Config']['Volumes'].keys()
+        volumes = (c.inspect_image(image_name)['Config']['Volumes'] or {}).keys()
         host_config = docker.utils.create_host_config(binds=[
             '{}-{}-{}-{}:{}'.format(environ['DOMAIN_NAME'], alias, tag,
                                     vol.replace('/', '_'), vol)
