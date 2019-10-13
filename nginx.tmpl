@@ -43,9 +43,8 @@ http {
 
     {% if not env.setup %}
     server {
-        {% if not env.DOMAIN_NAME %}
-        # Run on port 80 instead if we don't have a domain-name
         listen 80;
+        {% if not env.DOMAIN_NAME %}
         server_name ~^(www\.)?(?<subdomain>.+?)\.[^.]*$;
         {% else %}
         listen 443 ssl;
