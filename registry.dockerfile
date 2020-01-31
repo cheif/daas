@@ -1,6 +1,6 @@
-FROM registry:2.4.1
+FROM registry:2.7.1
 # Add a notification-statement to the config
-RUN echo '''\n\
+RUN printf '''\n\
 notifications:\n\
   endpoints:\n\
     - name: daas-webhook\n\
