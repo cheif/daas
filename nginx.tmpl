@@ -90,16 +90,17 @@ http {
     server {
         listen 443 ssl;
         server_name ~^(www\.)?{{env.DOMAIN_NAME}};
-        auth_basic "Registry realm";
-        auth_basic_user_file /etc/nginx/conf.d/nginx.htpasswd;
 
         location / {
-            proxy_pass http://daas:8080/;
+            # Default to the www-container
+            proxy_pass http://www:8080/;
         }
 
 
         # Docker registry
         location /v2/ {
+            auth_basic "Registry realm";
+            auth_basic_user_file /etc/nginx/conf.d/nginx.htpasswd;
             client_max_body_size 0;
 
 
