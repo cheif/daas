@@ -25,8 +25,8 @@ def get_aliases(container):
 
 
 def generate_certs_for_network(network):
-    aliases_list = map(get_aliases, network.containers)
-    aliases = [a for l in aliases_list for a in l]
+    aliases = [alias for container in network.containers
+               for alias in get_aliases(container)]
     generate_certs_and_restart_nginx(aliases)
 
 
@@ -38,7 +38,7 @@ def get_current_domains():
             lines = f.readlines()
             lines = list(itertools.dropwhile(lambda l: 'webroot_map' not in l,
                                              lines))[1:]
-            return [l.split('=')[0].strip() for l in lines]
+            return [line.split('=')[0].strip() for line in lines]
     except IOError:
         return []
 
@@ -152,9 +152,9 @@ def update_environment(network_name, alias, env):
 
 def setup_registry(network):
     '''Setup a registry in network'''
-    g = c.images.build(fileobj=open('registry.dockerfile', mode='rb'),
-                       tag='registry:notifs')
-    for l in g:
+    generator = c.images.build(fileobj=open('registry.dockerfile', mode='rb'),
+                               tag='registry:notifs')
+    for line in generator:
         # It seems like we'll have to interate through the generator for the
         # build to happen
         pass
