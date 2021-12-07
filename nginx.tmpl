@@ -29,22 +29,21 @@ http {
         server registry:5000;
     }
 
+    {% for route in routes %}
+    # Route for {{ route.alias }}.{{ env.DOMAIN_NAME }}
     server {
         listen 80;
         {% if not env.DOMAIN_NAME %}
-        server_name ~^(www\.)?(?<subdomain>.+?)\.[^.]*$;
+        server_name ~^(www\.)?{{ route.alias }}\.[^.]*$;
         {% else %}
         listen 443 ssl;
-        server_name ~^(www\.)?(?<subdomain>.+?)\.[^.]*\.[^.]*$;
+        server_name ~^(www\.)?{{ route.alias }}\.[^.]*\.[^.]*$;
         {% endif %}
 
         # This is for setting up letsencrypt
         location /.well-known {
             root /var/www/letsencrypt;
         }
-
-        # $subdomain now contains everything before the domain, including dots
-        # we can now use this to proxy-pass to different containers in the docker-network
 
         # Docker has a dns-server on 127.0.0.11 (at least right now), but it doesn't do
         # ipv6
@@ -57,10 +56,12 @@ http {
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $connection_upgrade;
-            # We require the container to have their service on 8080
-            proxy_pass http://$subdomain:8080$uri$is_args$args;
+
+            proxy_pass http://{{ route.alias }}:{{ route.port }}$uri$is_args$args;
         }
     }
+    {% endfor %}
+
     {% if env.DOMAIN_NAME %}
     # No ssl or registry if we don't have a domain-name
     ssl_certificate /etc/letsencrypt/live/{{env.DOMAIN_NAME}}/fullchain.pem;
@@ -88,13 +89,11 @@ http {
             proxy_pass http://www:8080/$uri$is_args$args;
         }
 
-
         # Docker registry
         location /v2/ {
             auth_basic "Registry realm";
             auth_basic_user_file /etc/nginx/conf.d/nginx.htpasswd;
             client_max_body_size 0;
-
 
             add_header 'Docker-Distribution-Api-Version' $docker_distribution_api_version always;
             proxy_pass http://docker-registry;

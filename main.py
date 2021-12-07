@@ -19,19 +19,6 @@ logger = logging.getLogger(__name__)
 c = docker.DockerClient(base_url='unix://var/run/docker.sock')
 
 
-def get_aliases(container):
-    network = container.attrs['NetworkSettings']['Networks'].get('daas', {})
-    aliases = [a for a in network.get('Aliases', {})
-               if not container.id.startswith(a)]
-    return aliases
-
-
-def generate_certs_for_network(network):
-    aliases = [alias for container in network.containers
-               for alias in get_aliases(container)]
-    generate_certs_and_restart_nginx(aliases)
-
-
 def get_current_domains():
     '''Fetch current domains we have a cert for from renew-conf'''
     path = '/etc/letsencrypt/renewal/{}.conf'.format(environ['DOMAIN_NAME'])
@@ -45,33 +32,56 @@ def get_current_domains():
         return []
 
 
-def generate_certs_and_restart_nginx(aliases):
-    if 'DOMAIN_NAME' in environ:
-        # Don't add routes for this container or the registry
-        non_routed_aliases = ['registry']
-        domain = environ['DOMAIN_NAME']
-        fqdns = {domain}
-        fqdns.update(set(['{}.{}'.format(a, domain) for a in aliases
-                          if a not in non_routed_aliases]))
-        fqdns.update(get_current_domains())
-        cmd = 'certbot certonly --webroot --agree-tos --expand --email=admin@{} \
-    --non-interactive -w /var/www/letsencrypt '.format(domain)
-        cmd += ' '.join(['-d {}'.format(fqdn) for fqdn in fqdns])
+def generate_certs_for_aliases(aliases, domain):
+    fqdns = {domain}
+    fqdns.update(set(['{}.{}'.format(a, domain) for a in aliases]))
+    fqdns.update(get_current_domains())
+    cmd = 'certbot certonly --webroot --agree-tos --expand --email=admin@{} \
+--non-interactive -w /var/www/letsencrypt '.format(domain)
+    cmd += ' '.join(['-d {}'.format(fqdn) for fqdn in fqdns])
 
-        # Run certbot
-        logging.info('Generating certs for: {}'.format(fqdns))
-        call(cmd, shell=True)
-        logging.info('Certificates generated')
+    # Run certbot
+    logging.info('Generating certs for: {}'.format(fqdns))
+    call(cmd, shell=True)
+    logging.info('Certificates generated')
 
 
-def change_nginx_conf():
-    template = jinja2.Template(open('nginx.tmpl').read())
+def get_aliases(container, network):
+    network_settings = container.attrs['NetworkSettings']
+    return [alias for alias in
+            network_settings['Networks']
+            .get(network.name, {}).get('Aliases', [])
+            if not container.id.startswith(alias)]
+
+
+def get_routes(container, network):
+    ports = [key.split('/')[0] for key, value in
+             container.attrs['NetworkSettings']['Ports'].items()
+             if value is None]
+    non_routed_aliases = ['registry']
+    aliases = [alias for alias in get_aliases(container, network)
+               if alias not in non_routed_aliases]
+    if len(aliases) > 0:
+        return {
+            "alias": aliases[0],
+            "port": ports[0] if len(ports) else '8080'
+        }
+
+
+def update_nginx_conf(network):
+    routes = [v for v in [get_routes(container, network)
+                          for container in network.containers]
+              if v is not None]
+    template = jinja2.Template(open('nginx.tmpl').read(),
+                               trim_blocks=True,
+                               lstrip_blocks=True)
     env = dict(environ)
-    nginx_conf = template.render(env=env)
+    nginx_conf = template.render(env=env, routes=routes)
     with open('/etc/nginx/nginx.conf', 'w') as f:
         f.write(nginx_conf)
     call('nginx -s reload', shell=True)
     logging.info('nginx.conf updated')
+    return [r['alias'] for r in routes]
 
 
 def setup_network(network_name):
@@ -82,7 +92,7 @@ def setup_network(network_name):
         network = c.networks.get(network_name)
     except docker.errors.NotFound:
         # Create network
-        network = c.network.create(network_name)
+        network = c.networks.create(network_name)
     if container not in network.containers:
         network.connect(container, aliases=['daas'])
 
@@ -92,8 +102,8 @@ def setup_network(network_name):
 def get_containers_with_alias(network, alias):
     aliases_map = defaultdict(list)
     for container in network.containers:
-        for a in get_aliases(container):
-            aliases_map[a].append(container)
+        for alias in get_aliases(container, network):
+            aliases_map[alias].append(container)
 
     return aliases_map.get(alias)
 
@@ -118,8 +128,8 @@ def update_container(network_name, repo, tag, alias=None):
             (c.images.get(image_name).attrs['Config']['Volumes'] or {}).keys()
         )
         volume_config = [
-            '{}-{}-{}-{}:{}'.format(environ['DOMAIN_NAME'], alias, tag,
-                                    vol.replace('/', '_'), vol)
+            '{}-{}-{}-{}:{}'.format(environ.get('DOMAIN_NAME', 'daas'), alias,
+                                    tag, vol.replace('/', '_'), vol)
             for vol in volumes
         ]
 
@@ -179,7 +189,7 @@ class EventHandler(object):
 class ConfigHandler(object):
     def GET(self, alias):
         def _get_info(cont):
-            aliases = get_aliases(cont)
+            aliases = get_aliases(cont, c.networks.get(self.network_name))
             return {
                 'alias': aliases[0] if len(aliases) else "-MISSING-",
                 'env': cont.attrs['Config']['Env'],
@@ -223,34 +233,38 @@ def start_event_listener(network):
 def watch(network):
     start_event_listener(network)
 
-    logging.info("Network fixed")
-
     setup_registry(network)
 
-    # Create a setup-nginx, that can be used for letsencrypt on first run
-    call('nginx -s stop', shell=True)
-    change_nginx_conf()
+    # Make sure nginx is running
     call('nginx', shell=True)
 
-    generate_certs_for_network(network)
+    aliases = update_nginx_conf(network)
 
     # Make sure everything is up
     time.sleep(1)
 
     if 'DOMAIN_NAME' in environ:
+        generate_certs_for_aliases(aliases, environ.get('DOMAIN_NAME'))
         c.login(environ.get('USERNAME'), environ.get('PASSWORD'),
                 registry=environ.get('DOMAIN_NAME'))
     for ev in c.events(filters={'network': network_name}):
-        generate_certs_for_network(network)
+        aliases = update_nginx_conf(network)
+        if 'DOMAIN_NAME' in environ:
+            generate_certs_for_aliases(aliases, environ.get('DOMAIN_NAME'))
+
+    call('nginx -s stop', shell=True)
 
 
 if __name__ == '__main__':
     network_name = environ.get('NETWORK_NAME', 'daas')
     network = setup_network(network_name)
 
+    logging.info("Network fixed")
+
     opts, args = getopt.getopt(sys.argv[1:], '', ['renew', 'watch'])
     for opt, _ in opts:
         if opt == '--watch':
             watch(network)
-        elif opt == '--renew':
-            generate_certs_for_network(network)
+        elif opt == '--renew' and 'DOMAIN_NAME' in environ:
+            aliases = update_nginx_conf(network)
+            generate_certs_for_aliases(aliases, environ.get('DOMAIN_NAME'))
