@@ -31,25 +31,17 @@ http {
 
     server {
         listen 80;
-        # This is for setting up letsencrypt
-        location /.well-known {
-            root /var/www/letsencrypt;
-        }
-
-        location / {
-            return 301 https://$host$request_uri;
-        }
-    }
-
-    {% if not env.setup %}
-    server {
-        listen 80;
         {% if not env.DOMAIN_NAME %}
         server_name ~^(www\.)?(?<subdomain>.+?)\.[^.]*$;
         {% else %}
         listen 443 ssl;
         server_name ~^(www\.)?(?<subdomain>.+?)\.[^.]*\.[^.]*$;
         {% endif %}
+
+        # This is for setting up letsencrypt
+        location /.well-known {
+            root /var/www/letsencrypt;
+        }
 
         # $subdomain now contains everything before the domain, including dots
         # we can now use this to proxy-pass to different containers in the docker-network
@@ -108,6 +100,5 @@ http {
             proxy_pass http://docker-registry;
         }
     }
-    {% endif %}
     {% endif %}
 }

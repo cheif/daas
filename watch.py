@@ -67,14 +67,11 @@ def generate_certs_and_restart_nginx(aliases):
         call(cmd, shell=True)
         logging.info('Certificates generated')
 
-    # Update nginx conf
-    change_nginx_conf()
 
 
-def change_nginx_conf(setup=False):
+def change_nginx_conf():
     template = jinja2.Template(open('nginx.tmpl').read())
     env = dict(environ)
-    env['setup'] = setup
     nginx_conf = template.render(env=env)
     with open('/etc/nginx/nginx.conf', 'w') as f:
         f.write(nginx_conf)
@@ -239,7 +236,7 @@ def main():
 
     # Create a setup-nginx, that can be used for letsencrypt on first run
     call('nginx -s stop', shell=True)
-    change_nginx_conf(setup=True)
+    change_nginx_conf()
     call('nginx', shell=True)
 
     generate_certs_for_network(network_name)
