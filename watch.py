@@ -7,32 +7,26 @@ import web
 import logging
 import itertools
 import time
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 from collections import defaultdict
 from os import environ
 from subprocess import call
 
-c = docker.Client(base_url='unix://var/run/docker.sock')
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+c = docker.DockerClient(base_url='unix://var/run/docker.sock')
 
 
-def get_aliases(container_id):
-    networks = c.inspect_container(container_id)['NetworkSettings']['Networks']
-    aliases = [a for a in networks['daas']['Aliases'] or []
-               if not container_id.startswith(a)]
+def get_aliases(container):
+    network = container.attrs['NetworkSettings']['Networks'].get('daas', {})
+    aliases = [a for a in network.get('Aliases', {})
+               if not container.id.startswith(a)]
     return aliases
 
 
-def get_aliases_for_network(network_name):
-    containers = c.inspect_network(network_name)['Containers']
-    aliases_list = map(get_aliases, containers)
-    return [a for l in aliases_list for a in l]
-
-
-def generate_certs_for_network(network_name):
-    aliases = get_aliases_for_network(network_name)
+def generate_certs_for_network(network):
+    aliases_list = map(get_aliases, network.containers)
+    aliases = [a for l in aliases_list for a in l]
     generate_certs_and_restart_nginx(aliases)
 
 
@@ -68,7 +62,6 @@ def generate_certs_and_restart_nginx(aliases):
         logging.info('Certificates generated')
 
 
-
 def change_nginx_conf():
     template = jinja2.Template(open('nginx.tmpl').read())
     env = dict(environ)
@@ -82,65 +75,65 @@ def change_nginx_conf():
 def setup_network(network_name):
     '''Setup a network, and add this container to it'''
     container_id = socket.gethostname()
-    container = c.inspect_container(container_id)
+    container = c.containers.get(container_id)
     try:
-        network_info = c.inspect_network(network_name)
-        if container['Id'] not in network_info['Containers']:
-            c.connect_container_to_network(container_id, network_name,
-                                           aliases=['daas'])
+        network = c.networks.get(network_name)
     except docker.errors.NotFound:
         # Create network
-        c.create_network(network_name)
-        c.connect_container_to_network(container_id, network_name)
+        network = c.network.create(network_name)
+    if container not in network.containers:
+        network.connect(container, aliases=['daas'])
+
+    return network
 
 
-def get_containers_with_alias(network_name, alias):
-    containers = c.inspect_network(network_name)['Containers']
+def get_containers_with_alias(network, alias):
     aliases_map = defaultdict(list)
-    for container in containers:
+    for container in network.containers:
         for a in get_aliases(container):
-            aliases_map[a].append(c.inspect_container(container))
+            aliases_map[a].append(container)
 
     return aliases_map.get(alias)
 
 
 def update_container(network_name, repo, tag, alias=None):
     # Try to find an existing container
+    network = c.networks.get(network_name)
     alias = alias or repo
     image_name = '{}:{}'.format(repo, tag)
-    old_containers = get_containers_with_alias(network_name, alias)
+    old_containers = get_containers_with_alias(network, alias)
     env = []
     if old_containers:
-        env = c.inspect_container(old_containers[0])['Config']['Env']
-        old_img = c.inspect_container(old_containers[0])['Image']
-        new_img = c.inspect_image(image_name)['Id']
-        if old_img == new_img:
+        env = old_containers[0].attrs['Config']['Env']
+        old_img = old_containers[0].image
+        new_img = c.images.get(image_name)
+        if old_img.id == new_img.id:
             # Same image, just let the old one run
             return
 
     try:
-        volumes = (c.inspect_image(image_name)['Config']['Volumes'] or {}).keys()
-        host_config = docker.utils.create_host_config(binds=[
+        volumes = list(
+            (c.images.get(image_name).attrs['Config']['Volumes'] or {}).keys()
+        )
+        volume_config = [
             '{}-{}-{}-{}:{}'.format(environ['DOMAIN_NAME'], alias, tag,
                                     vol.replace('/', '_'), vol)
             for vol in volumes
-        ])
+        ]
 
-        new_container = c.create_container('{}:{}'.format(repo, tag),
-                                           environment=env,
-                                           volumes=volumes,
-                                           host_config=host_config)
+        new_container = c.containers.create('{}:{}'.format(repo, tag),
+                                            environment=env,
+                                            volumes=volume_config)
     except docker.errors.NotFound as e:
         logging.error(e)
         # Just abort for now
         return
-    c.connect_container_to_network(new_container, network_name,
-                                   aliases=[alias])
-    c.start(new_container)
+    network.connect(new_container, aliases=[alias])
+    new_container.start()
     if old_containers:
         for container in old_containers:
-            c.stop(container)
-            c.remove_container(container)
+            container.stop()
+            container.remove()
 
 
 def update_environment(network_name, alias, env):
@@ -157,14 +150,15 @@ def update_environment(network_name, alias, env):
         c.remove_container(old)
 
 
-def setup_registry(network_name):
+def setup_registry(network):
     '''Setup a registry in network'''
-    g = c.build(fileobj=open('registry.dockerfile'), tag='registry:notifs')
+    g = c.images.build(fileobj=open('registry.dockerfile', mode='rb'),
+                       tag='registry:notifs')
     for l in g:
         # It seems like we'll have to interate through the generator for the
         # build to happen
         pass
-    update_container(network_name, 'registry', 'notifs')
+    update_container(network.name, 'registry', 'notifs')
     logging.info("Registry running")
 
 
@@ -183,17 +177,13 @@ class EventHandler(object):
 class ConfigHandler(object):
     def GET(self, alias):
         def _get_info(cont):
-            cont = c.inspect_container(cont)
-            network_info = \
-                cont['NetworkSettings']['Networks'][self.network_name]
-            alias = network_info['Aliases'][0] if network_info['Aliases'] \
-                else ''
+            aliases = get_aliases(cont)
             return {
-                'alias': alias,
-                'env': cont['Config']['Env'],
-                'state': 'running' if cont['State']['Running'] else 'error',
+                'alias': aliases[0] if len(aliases) else "-MISSING-",
+                'env': cont.attrs['Config']['Env'],
+                'state': cont.status,
             }
-        container_info = [_get_info(cont) for cont in c.containers()]
+        container_info = [_get_info(cont) for cont in c.containers.list()]
         return json.dumps(container_info)
 
     def PUT(self, alias):
@@ -214,10 +204,10 @@ app = web.application((
     globals())
 
 
-def start_event_listener(network_name):
+def start_event_listener(network):
     # Ugly way to pass network_name to web-handler
-    EventHandler.network_name = network_name
-    ConfigHandler.network_name = network_name
+    EventHandler.network_name = network.name
+    ConfigHandler.network_name = network.name
     thread = threading.Thread(target=app.run)
     thread.daemon = True
     thread.start()
@@ -226,20 +216,20 @@ def start_event_listener(network_name):
 
 def main():
     network_name = environ.get('NETWORK_NAME', 'daas')
-    setup_network(network_name)
+    network = setup_network(network_name)
 
-    start_event_listener(network_name)
+    start_event_listener(network)
 
     logging.info("Network fixed")
 
-    setup_registry(network_name)
+    setup_registry(network)
 
     # Create a setup-nginx, that can be used for letsencrypt on first run
     call('nginx -s stop', shell=True)
     change_nginx_conf()
     call('nginx', shell=True)
 
-    generate_certs_for_network(network_name)
+    generate_certs_for_network(network)
 
     # Make sure everything is up
     time.sleep(1)
@@ -248,7 +238,7 @@ def main():
         c.login(environ.get('USERNAME'), environ.get('PASSWORD'),
                 registry=environ.get('DOMAIN_NAME'))
     for ev in c.events(filters={'network': network_name}):
-        generate_certs_for_network(network_name)
+        generate_certs_for_network(network)
 
 
 if __name__ == '__main__':
