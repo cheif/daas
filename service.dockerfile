@@ -6,7 +6,7 @@ RUN pip install docker web.py zope.hookable zope.deprecation zope.deferredimport
 RUN mkdir /var/www/letsencrypt /etc/nginx/conf.d
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["python3", "watch.py"]
+CMD ["python3", "main.py", "--watch"]
 
 WORKDIR /usr/src/app
 COPY entrypoint.sh /entrypoint.sh

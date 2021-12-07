@@ -7,6 +7,8 @@ import web
 import logging
 import itertools
 import time
+import sys
+import getopt
 from collections import defaultdict
 from os import environ
 from subprocess import call
@@ -201,23 +203,24 @@ app = web.application((
     '/', 'IndexHandler',
     '/events', 'EventHandler',
     '/config(?:/(?P<alias>[^/]*))?/?', 'ConfigHandler'),
-    globals())
+    locals())
+
+
+def runwebapp():
+    web.httpserver.runsimple(app.wsgifunc(), ('0.0.0.0', 8080))
 
 
 def start_event_listener(network):
     # Ugly way to pass network_name to web-handler
     EventHandler.network_name = network.name
     ConfigHandler.network_name = network.name
-    thread = threading.Thread(target=app.run)
+    thread = threading.Thread(target=runwebapp)
     thread.daemon = True
     thread.start()
     logging.info("HTTP started")
 
 
-def main():
-    network_name = environ.get('NETWORK_NAME', 'daas')
-    network = setup_network(network_name)
-
+def watch(network):
     start_event_listener(network)
 
     logging.info("Network fixed")
@@ -242,4 +245,12 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    network_name = environ.get('NETWORK_NAME', 'daas')
+    network = setup_network(network_name)
+
+    opts, args = getopt.getopt(sys.argv[1:], '', ['renew', 'watch'])
+    for opt, _ in opts:
+        if opt == '--watch':
+            watch(network)
+        elif opt == '--renew':
+            generate_certs_for_network(network)
