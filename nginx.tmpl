@@ -85,7 +85,7 @@ http {
 
         location / {
             # Default to the www-container
-            proxy_pass http://www:8080/;
+            proxy_pass http://www:8080/$uri$is_args$args;
         }
 
 
