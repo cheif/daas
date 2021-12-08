@@ -59,6 +59,9 @@ def get_routes(container, network):
     non_routed_aliases = ['registry']
     aliases = [alias for alias in get_aliases(container, network)
                if alias not in non_routed_aliases]
+    logging.info('Getting routes for: {}, aliases: {}, ports: {}'.format(
+        container, aliases, ports
+    ))
     if len(aliases) > 0:
         return {
             "alias": aliases[0],
@@ -242,12 +245,14 @@ def watch(network):
                 registry=environ.get('DOMAIN_NAME'))
     for ev in c.events(decode=True, filters={'network': network_name}):
         logging.info("Got event: {}".format(ev))
-        if ev['Action'] == 'connect':
-            aliases = update_nginx_conf(network)
-            call('nginx -s reload', shell=True)
 
-            if 'DOMAIN_NAME' in environ:
-                generate_certs_for_aliases(aliases, environ.get('DOMAIN_NAME'))
+        # Make sure network has updated data
+        network.reload()
+        aliases = update_nginx_conf(network)
+        call('nginx -s reload', shell=True)
+
+        if 'DOMAIN_NAME' in environ:
+            generate_certs_for_aliases(aliases, environ.get('DOMAIN_NAME'))
 
     call('nginx -s stop', shell=True)
 
