@@ -9,7 +9,6 @@ import itertools
 import time
 import sys
 import getopt
-from collections import defaultdict
 from os import environ
 from subprocess import call
 
@@ -100,12 +99,12 @@ def setup_network(network_name):
 
 
 def get_containers_with_alias(network, alias):
-    aliases_map = defaultdict(list)
+    containers = []
     for container in network.containers:
-        for alias in get_aliases(container, network):
-            aliases_map[alias].append(container)
+        if alias in get_aliases(container, network):
+            containers.append(container)
 
-    return aliases_map.get(alias)
+    return containers
 
 
 def update_container(network_name, repo, tag, alias=None):
@@ -113,13 +112,16 @@ def update_container(network_name, repo, tag, alias=None):
     network = c.networks.get(network_name)
     alias = alias or repo
     image_name = '{}:{}'.format(repo, tag)
+    logging.info("Updating: {}".format(image_name))
     old_containers = get_containers_with_alias(network, alias)
+    logging.info("Found old containers: {}".format(old_containers))
     env = []
     if old_containers:
         env = old_containers[0].attrs['Config']['Env']
         old_img = old_containers[0].image
         new_img = c.images.get(image_name)
         if old_img.id == new_img.id:
+            logging.info("Already running this image")
             # Same image, just let the old one run
             return
 
@@ -140,10 +142,12 @@ def update_container(network_name, repo, tag, alias=None):
         logging.error(e)
         # Just abort for now
         return
+    logging.info("Starting new container: {}".format(new_container))
     network.connect(new_container, aliases=[alias])
     new_container.start()
     if old_containers:
         for container in old_containers:
+            logging.info("Killing old container: {}".format(container))
             container.stop()
             container.remove()
 
@@ -164,12 +168,8 @@ def update_environment(network_name, alias, env):
 
 def setup_registry(network):
     '''Setup a registry in network'''
-    generator = c.images.build(fileobj=open('registry.dockerfile', mode='rb'),
-                               tag='registry:notifs')
-    for line in generator:
-        # It seems like we'll have to interate through the generator for the
-        # build to happen
-        pass
+    c.images.build(fileobj=open('registry.dockerfile', mode='rb'),
+                   tag='registry:notifs')
     update_container(network.name, 'registry', 'notifs')
     logging.info("Registry running")
 
@@ -181,8 +181,7 @@ class EventHandler(object):
             if e['action'] == 'push' and 'tag' in e['target']:
                 repo_name, tag = e['target']['repository'], e['target']['tag']
                 repo = '{}/{}'.format(environ['DOMAIN_NAME'], repo_name)
-                for line in c.pull(repository=repo, tag=tag, stream=True):
-                    logging.info(json.dumps(json.loads(line), indent=4))
+                c.images.pull(repo, tag=tag)
                 update_container(self.network_name, repo, tag, alias=repo_name)
 
 
