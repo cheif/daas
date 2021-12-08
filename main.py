@@ -6,7 +6,6 @@ import threading
 import web
 import logging
 import itertools
-import time
 import sys
 import getopt
 from os import environ
@@ -78,7 +77,6 @@ def update_nginx_conf(network):
     nginx_conf = template.render(env=env, routes=routes)
     with open('/etc/nginx/nginx.conf', 'w') as f:
         f.write(nginx_conf)
-    call('nginx -s reload', shell=True)
     logging.info('nginx.conf updated')
     return [r['alias'] for r in routes]
 
@@ -234,22 +232,22 @@ def watch(network):
 
     setup_registry(network)
 
-    # Make sure nginx is running
-    call('nginx', shell=True)
-
     aliases = update_nginx_conf(network)
-
-    # Make sure everything is up
-    time.sleep(1)
+    call('nginx', shell=True)
 
     if 'DOMAIN_NAME' in environ:
         generate_certs_for_aliases(aliases, environ.get('DOMAIN_NAME'))
+
         c.login(environ.get('USERNAME'), environ.get('PASSWORD'),
                 registry=environ.get('DOMAIN_NAME'))
-    for ev in c.events(filters={'network': network_name}):
-        aliases = update_nginx_conf(network)
-        if 'DOMAIN_NAME' in environ:
-            generate_certs_for_aliases(aliases, environ.get('DOMAIN_NAME'))
+    for ev in c.events(decode=True, filters={'network': network_name}):
+        logging.info("Got event: {}".format(ev))
+        if ev['Action'] == 'connect':
+            aliases = update_nginx_conf(network)
+            call('nginx -s reload', shell=True)
+
+            if 'DOMAIN_NAME' in environ:
+                generate_certs_for_aliases(aliases, environ.get('DOMAIN_NAME'))
 
     call('nginx -s stop', shell=True)
 
