@@ -69,7 +69,7 @@ def get_routes(container, network):
         }
 
 
-def update_nginx_conf(network):
+def update_nginx_conf(network, use_certificates=True):
     routes = [v for v in [get_routes(container, network)
                           for container in network.containers]
               if v is not None]
@@ -77,7 +77,11 @@ def update_nginx_conf(network):
                                trim_blocks=True,
                                lstrip_blocks=True)
     env = dict(environ)
-    nginx_conf = template.render(env=env, routes=routes)
+    nginx_conf = template.render(
+        env=env,
+        routes=routes,
+        use_certificates=use_certificates
+    )
     with open('/etc/nginx/nginx.conf', 'w') as f:
         f.write(nginx_conf)
     logging.info('nginx.conf updated')
@@ -235,11 +239,15 @@ def watch(network):
 
     setup_registry(network)
 
-    aliases = update_nginx_conf(network)
+    # First we generate this conf without certificates, since we might not
+    # have the certificates on disk yet, and otherwise nginx will fail
+    aliases = update_nginx_conf(network, use_certificates=False)
     call('nginx', shell=True)
 
     if 'DOMAIN_NAME' in environ:
         generate_certs_for_aliases(aliases, environ.get('DOMAIN_NAME'))
+        aliases = update_nginx_conf(network)
+        call('nginx -s reload', shell=True)
 
         c.login(environ.get('USERNAME'), environ.get('PASSWORD'),
                 registry=environ.get('DOMAIN_NAME'))
@@ -253,6 +261,7 @@ def watch(network):
 
         if 'DOMAIN_NAME' in environ:
             generate_certs_for_aliases(aliases, environ.get('DOMAIN_NAME'))
+            call('nginx -s reload', shell=True)
 
     call('nginx -s stop', shell=True)
 

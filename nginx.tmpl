@@ -33,10 +33,12 @@ http {
     # Route for {{ route.alias }}.{{ env.DOMAIN_NAME }}
     server {
         listen 80;
+        {% if use_certificates %}
+        listen 443 ssl;
+        {% endif %}
         {% if not env.DOMAIN_NAME %}
         server_name ~^(www\.)?{{ route.alias }}\.[^.]*$;
         {% else %}
-        listen 443 ssl;
         server_name ~^(www\.)?{{ route.alias }}\.[^.]*\.[^.]*$;
         {% endif %}
 
@@ -62,7 +64,7 @@ http {
     }
     {% endfor %}
 
-    {% if env.DOMAIN_NAME %}
+    {% if env.DOMAIN_NAME and use_certificates %}
     # No ssl or registry if we don't have a domain-name
     ssl_certificate /etc/letsencrypt/live/{{env.DOMAIN_NAME}}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{{env.DOMAIN_NAME}}/privkey.pem;
