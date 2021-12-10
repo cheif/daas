@@ -75,7 +75,8 @@ http {
     ssl_session_cache shared:SSL:50m;
     ssl_stapling on;
     ssl_stapling_verify on;
-    add_header Strict-Transport-Security max-age=15768000;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+
 
     map $upstream_http_docker_distribution_api_version $docker_distribution_api_version {
       'registry/2.0' '';
