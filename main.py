@@ -34,8 +34,9 @@ def generate_certs_for_aliases(aliases, domain):
     fqdns = {domain}
     fqdns.update(set(['{}.{}'.format(a, domain) for a in aliases]))
     fqdns.update(get_current_domains())
-    cmd = 'certbot certonly --webroot --agree-tos --expand --email=admin@{} \
---non-interactive -w /var/www/letsencrypt '.format(domain)
+    cmd = 'certbot certonly --cert-name {} --webroot --agree-tos --expand \
+--email=admin@{} --non-interactive -w /var/www/letsencrypt ' \
+    .format(domain, domain)
     cmd += ' '.join(['-d {}'.format(fqdn) for fqdn in fqdns])
 
     # Run certbot
