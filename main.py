@@ -7,6 +7,7 @@ import web
 import logging
 import itertools
 import sys
+import time
 import getopt
 from os import environ
 from subprocess import call
@@ -249,6 +250,9 @@ def watch(network):
         generate_certs_for_aliases(aliases, environ.get('DOMAIN_NAME'))
         aliases = update_nginx_conf(network)
         call('nginx -s reload', shell=True)
+
+        # Sleep so that we're sure nginx is up again before trying login
+        time.sleep(1.0)
 
         c.login(environ.get('USERNAME'), environ.get('PASSWORD'),
                 registry=environ.get('DOMAIN_NAME'))
