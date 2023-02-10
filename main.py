@@ -64,10 +64,13 @@ def get_routes(container, network):
     logging.info('Getting routes for: {}, aliases: {}, ports: {}'.format(
         container, aliases, ports
     ))
+    password_protected = container.labels \
+        .get("password_protected", "") == "true"
     if len(aliases) > 0:
         return {
             "alias": aliases[0],
-            "port": ports[0] if len(ports) else '8080'
+            "port": ports[0] if len(ports) else '8080',
+            "password_protected": password_protected
         }
 
 

@@ -9,4 +9,6 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 COPY . .
 
+LABEL password_protected=true
+
 CMD ["./run.sh"]
