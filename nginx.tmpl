@@ -51,10 +51,17 @@ http {
         # ipv6
         resolver 127.0.0.11 ipv6=off;
         location / {
-            {% if route.password_protected %}
+
+            {% if route.auth == "password" %}
+            # Use password based auth
             auth_basic "{{route.alias}} realm";
             auth_basic_user_file /etc/nginx/conf.d/nginx.htpasswd;
+            {% elif route.auth == "oauth2" %}
+            # Use oauth2
+            auth_request /oauth2/auth;
+            error_page 401 = /oauth2/sign_in?rd=$scheme://$host$request_uri;
             {% endif %}
+
             client_max_body_size 0;
             proxy_set_header HOST $host;
             proxy_set_header X-Forwarded-Proto $scheme;
@@ -65,6 +72,18 @@ http {
 
             proxy_pass http://{{ route.alias }}:{{ route.port }};
         }
+
+        {% if route.auth == "oauth2" %}
+        location /oauth2/ {
+            # Make sure the OAuth2 Proxy knows where the original request came from.
+            proxy_set_header Host       $host;
+            proxy_set_header X-Real-IP  $remote_addr;
+            proxy_set_header X-Scheme  $scheme;
+            proxy_set_header X-Auth-Request-Redirect $scheme://$host$request_uri;
+
+            proxy_pass http://{{ route.oauth2_provider }};
+        }
+        {% endif %}
     }
     {% endfor %}
 
