@@ -191,8 +191,14 @@ class EventHandler(object):
             if e['action'] == 'push' and 'tag' in e['target']:
                 repo_name, tag = e['target']['repository'], e['target']['tag']
                 repo = '{}/{}'.format(environ['DOMAIN_NAME'], repo_name)
-                c.images.pull(repo, tag=tag)
-                update_container(self.network_name, repo, tag, alias=repo_name)
+                try:
+                    c.images.pull(repo, tag=tag)
+                    update_container(self.network_name, repo, tag,
+                                     alias=repo_name)
+                except docker.errors.APIError:
+                    # This might be the registry being down, us trying to pull
+                    # a plugin or something similar, just error out
+                    pass
 
 
 class ConfigHandler(object):
